@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.local
+.venv/
+node_modules/
+dist/
+build/
+logs/
+*.log
+npm-debug.log*
+yarn-error.log*
+*.sqlite
+
+# LiveKit / media
+*.wav
+*.mp3
+
+# Next.js
+.next/
+out/
+
+# VSCode / IDE
+.vscode/
+.idea/
+

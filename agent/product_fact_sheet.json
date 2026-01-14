@@ -1,0 +1,14 @@
+{
+  "product_name": "EcoBike X1",
+  "one_liner": "A lightweight commuter e-bike with long-range battery and integrated safety tech.",
+  "battery_life": "Up to 85 km per charge (Eco mode), typical 55\u201370 km mixed riding.",
+  "battery_capacity": "720 Wh removable lithium-ion pack.",
+  "gps": "Yes. Built-in GPS + anti-theft tracking in the companion app (subscription optional after 12 months).",
+  "motor": "250W rear hub motor, 45 Nm torque, pedal-assist with 5 levels.",
+  "top_speed": "25 km/h assist limit (region dependent).",
+  "charging_time": "0\u2013100% in ~4.5 hours with the included fast charger.",
+  "warranty": "2-year standard warranty. Battery covered for 600 charge cycles or 2 years (whichever comes first).",
+  "shipping": "Ships in 3\u20135 business days. Delivery in 7\u201310 business days (metro), 10\u201314 (non-metro).",
+  "returns": "14-day return window if unused; shipping fees may apply.",
+  "cta_url": "https://example.com/ecobike-x1/buy"
+}

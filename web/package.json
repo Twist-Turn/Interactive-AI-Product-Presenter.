@@ -1,0 +1,21 @@
+{
+  "name": "ai-product-presenter-web",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000"
+  },
+  "dependencies": {
+    "livekit-client": "^2.6.1",
+    "livekit-server-sdk": "^2.6.2",
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.8",
+    "@types/react": "19.2.8",
+    "typescript": "5.9.3"
+  }
+}

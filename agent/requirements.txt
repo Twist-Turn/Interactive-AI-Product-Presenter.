@@ -1,0 +1,11 @@
+python-dotenv
+
+livekit-agents
+
+livekit-plugins-openai
+livekit-plugins-deepgram
+livekit-plugins-elevenlabs
+
+livekit-plugins-silero
+livekit-plugins-turn-detector
+livekit-plugins-noise-cancellation
