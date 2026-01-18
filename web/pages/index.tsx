@@ -95,39 +95,137 @@ export default function Home() {
       const [track] = stream.getVideoTracks();
       await avatarRoom.localParticipant.publishTrack(new LocalVideoTrack(track));
 
-      userRoom.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
-        if (track.kind !== "audio") return;
-        if (participant.identity && participant.identity.startsWith("customer-")) return;
-
-        const el = track.attach() as HTMLAudioElement;
+      // Helper function to analyze agent audio
+      const analyzeAgentAudio = (audioTrack: any) => {
+        console.log("🎤 Setting up audio analysis for track:", audioTrack);
+        
+        // Get the MediaStreamTrack directly
+        const mediaStreamTrack = audioTrack.mediaStreamTrack;
+        if (!mediaStreamTrack) {
+          console.error("❌ No mediaStreamTrack available");
+          return;
+        }
+        
+        console.log("📻 MediaStreamTrack state:", mediaStreamTrack.readyState, "enabled:", mediaStreamTrack.enabled);
+        
+        // Create a MediaStream from the track
+        const stream = new MediaStream([mediaStreamTrack]);
+        
+        // Also attach to audio element for playback
+        const el = audioTrack.attach() as HTMLAudioElement;
         el.autoplay = true;
         el.volume = 1.0;
+        el.onplay = () => console.log("✅ Audio element playing");
+        el.onerror = (e) => console.error("❌ Audio element error:", e);
 
+        // Use the MediaStream directly for analysis (not the audio element)
         const audioCtx = new AudioContext();
-        const src = audioCtx.createMediaElementSource(el);
+        const src = audioCtx.createMediaStreamSource(stream);
         const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 1024;
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.3;
 
         src.connect(analyser);
-        analyser.connect(audioCtx.destination);
+        // Note: We DON'T connect to destination since the audio element handles playback
 
-        const buf = new Uint8Array(analyser.fftSize);
+        const timeDomainData = new Uint8Array(analyser.fftSize);
+        const frequencyData = new Uint8Array(analyser.frequencyBinCount);
+        
+        let frameCount = 0;
+        let hasDetectedAudio = false;
 
         const tick = () => {
-          analyser.getByteTimeDomainData(buf);
-          const rms = rmsFromByteTimeDomain(buf);
-          const open = Math.min(1, Math.max(0, (rms - 0.015) / 0.12));
-          const smooth = levelRef.current * 0.8 + open * 0.2;
+          analyser.getByteTimeDomainData(timeDomainData);
+          analyser.getByteFrequencyData(frequencyData);
+          
+          const rms = rmsFromByteTimeDomain(timeDomainData);
+          
+          const sampleRate = audioCtx.sampleRate;
+          const binSize = sampleRate / analyser.fftSize;
+          const lowBin = Math.floor(300 / binSize);
+          const highBin = Math.floor(3400 / binSize);
+          
+          let speechEnergy = 0;
+          for (let i = lowBin; i < highBin && i < frequencyData.length; i++) {
+            speechEnergy += frequencyData[i];
+          }
+          speechEnergy = speechEnergy / (highBin - lowBin) / 255;
+          
+          const rawLevel = Math.max(rms * 1.5, speechEnergy);
+          
+          const threshold = 0.01;
+          const scale = 0.12;
+          const open = Math.min(1, Math.max(0, (rawLevel - threshold) / scale));
+          
+          const smoothFactor = 0.6;
+          const smooth = levelRef.current * smoothFactor + open * (1 - smoothFactor);
+          
           levelRef.current = smooth;
           setMouthOpen(smooth);
           setVoiceLevel(smooth);
+          
+          // Debug log every 60 frames (~1 second at 60fps)
+          frameCount++;
+          if (frameCount % 60 === 0) {
+            console.log("📊 Audio levels - RMS:", rms.toFixed(3), "Speech:", speechEnergy.toFixed(3), "Mouth:", smooth.toFixed(3));
+            if (rms > 0.01 && !hasDetectedAudio) {
+              console.log("🎉 AUDIO DETECTED! Lip sync should now work!");
+              hasDetectedAudio = true;
+            }
+          }
+          
           requestAnimationFrame(tick);
         };
         tick();
+      };
+
+      // Check for already-existing participants (if agent joined first)
+      console.log("🔍 Checking for existing participants in room...");
+      console.log("Total remote participants:", userRoom.remoteParticipants.size);
+      
+      userRoom.remoteParticipants.forEach((participant) => {
+        const identity = participant.identity || "";
+        console.log("Found participant:", identity);
+        
+        if (identity === "Alex-Avatar" || identity.startsWith("customer-")) {
+          console.log("⏭️  Skipping participant:", identity);
+          return;
+        }
+        
+        console.log("✅ Found existing agent participant:", identity);
+        participant.audioTrackPublications.forEach((pub) => {
+          console.log("Audio publication:", pub.trackSid, "subscribed:", pub.isSubscribed, "track:", !!pub.track);
+          if (pub.track) {
+            console.log("🎵 Analyzing existing audio track from:", identity);
+            analyzeAgentAudio(pub.track);
+          } else if (pub.isSubscribed) {
+            console.log("⚠️  Track is subscribed but track object is null");
+          }
+        });
+      });
+
+      // Listen for new agent audio tracks
+      userRoom.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+        console.log("🎧 TrackSubscribed event:", {
+          kind: track.kind,
+          participant: participant.identity,
+          trackSid: pub.trackSid
+        });
+        
+        if (track.kind !== "audio") return;
+        
+        const identity = participant.identity || "";
+        if (identity === "Alex-Avatar" || identity.startsWith("customer-")) {
+          console.log("⏭️  Skipping track from:", identity);
+          return;
+        }
+
+        console.log("🎵 Analyzing audio from new agent participant:", identity);
+        analyzeAgentAudio(track);
       });
 
       setState("live");
-      setStatus("Live — say hi to Alex");
+      setStatus("Live – say hi to Alex");
     } catch (err: any) {
       console.error(err);
       setState("error");
@@ -138,7 +236,8 @@ export default function Home() {
   useEffect(() => {
     voiceLevelRef.current = voiceLevel;
     mouthRef.current = mouthOpen;
-    const speaking = voiceLevel > 0.08;
+    // Lower threshold for more sensitive detection
+    const speaking = voiceLevel > 0.05;
     agentTalkingRef.current = speaking;
     setAgentTalking(speaking);
   }, [voiceLevel, mouthOpen]);
@@ -487,41 +586,43 @@ export default function Home() {
       g.arc(headX + eyeOffset, headY + headR * 0.10, 20, 0, Math.PI * 2);
       g.fill();
 
-      // Enhanced animated mouth
-      const mouthW = headR * 1.10;
-      const mouthH = 10 + mouthRef.current * 70;
-      const mouthY = headY + headR * 0.40;
+      // Enhanced animated mouth with better proportions
+      const mouthW = headR * 0.95; // Reduced width for more natural look
+      // More controlled mouth opening with better range
+      const mouthH = 6 + mouthRef.current * 55; // Reduced max opening
+      const mouthY = headY + headR * 0.42; // Slightly lower position
       
-      // Mouth outline
+      // Mouth outline with rounded shape
       g.beginPath();
-      drawMouth(headX - mouthW / 2, mouthY, mouthW, mouthH, 20);
+      drawMouth(headX - mouthW / 2, mouthY, mouthW, mouthH, 18);
       const mouthGrad = g.createLinearGradient(headX, mouthY, headX, mouthY + mouthH);
-      mouthGrad.addColorStop(0, "#4a2639");
-      mouthGrad.addColorStop(1, "#2d1621");
+      mouthGrad.addColorStop(0, "#3a1f2e");
+      mouthGrad.addColorStop(0.5, "#2d1621");
+      mouthGrad.addColorStop(1, "#1f0e15");
       g.fillStyle = mouthGrad;
       g.fill();
       
-      // Upper teeth with realistic detail
-      if (mouthRef.current > 0.12) {
+      // Upper teeth - only show when mouth is open enough
+      if (mouthRef.current > 0.15) {
         g.fillStyle = "#fefefe";
-        const teethW = mouthW * 0.70;
-        const teethH = Math.min(mouthH * 0.28, 20);
-        drawMouth(headX - teethW / 2, mouthY + 2, teethW, teethH, 5);
+        const teethW = mouthW * 0.75;
+        const teethH = Math.min(mouthH * 0.32, 16);
+        drawMouth(headX - teethW / 2, mouthY + 2, teethW, teethH, 4);
         g.fill();
         
-        // Teeth separation and detail
-        g.strokeStyle = "rgba(235, 235, 240, 0.6)";
-        g.lineWidth = 1.2;
+        // Teeth separation lines
+        g.strokeStyle = "rgba(230, 230, 235, 0.5)";
+        g.lineWidth = 1;
         for (let i = 1; i < 6; i++) {
           const tx = headX - teethW / 2 + (teethW / 6) * i;
           g.beginPath();
           g.moveTo(tx, mouthY + 3);
-          g.lineTo(tx, mouthY + teethH);
+          g.lineTo(tx, mouthY + teethH + 1);
           g.stroke();
         }
         
-        // Gum line
-        g.strokeStyle = "rgba(255, 180, 180, 0.3)";
+        // Subtle gum line
+        g.strokeStyle = "rgba(250, 200, 200, 0.25)";
         g.lineWidth = 1;
         g.beginPath();
         g.moveTo(headX - teethW / 2, mouthY + 2);
@@ -529,15 +630,15 @@ export default function Home() {
         g.stroke();
       }
       
-      // Lower teeth when mouth is very open
-      if (mouthRef.current > 0.5) {
+      // Lower teeth - only for very open mouth
+      if (mouthRef.current > 0.6) {
         g.fillStyle = "#fafafa";
-        const lowerTeethW = mouthW * 0.65;
-        const lowerTeethH = Math.min(mouthH * 0.20, 14);
-        drawMouth(headX - lowerTeethW / 2, mouthY + mouthH - lowerTeethH - 2, lowerTeethW, lowerTeethH, 5);
+        const lowerTeethW = mouthW * 0.68;
+        const lowerTeethH = Math.min(mouthH * 0.22, 12);
+        drawMouth(headX - lowerTeethW / 2, mouthY + mouthH - lowerTeethH - 2, lowerTeethW, lowerTeethH, 4);
         g.fill();
         
-        g.strokeStyle = "rgba(230, 230, 235, 0.5)";
+        g.strokeStyle = "rgba(225, 225, 230, 0.4)";
         g.lineWidth = 1;
         for (let i = 1; i < 5; i++) {
           const tx = headX - lowerTeethW / 2 + (lowerTeethW / 5) * i;
@@ -548,30 +649,50 @@ export default function Home() {
         }
       }
       
-      // Realistic tongue
-      if (mouthRef.current > 0.25) {
-        const tongueGrad = g.createRadialGradient(headX, mouthY + mouthH * 0.6, 5, headX, mouthY + mouthH * 0.65, mouthW * 0.35);
-        tongueGrad.addColorStop(0, "#ff7a94");
-        tongueGrad.addColorStop(0.6, "#f43f5e");
-        tongueGrad.addColorStop(1, "#e11d48");
+      // Tongue - more subtle and natural
+      if (mouthRef.current > 0.3) {
+        const tongueW = mouthW * 0.50;
+        const tongueH = mouthH * 0.38;
+        const tongueY = mouthY + mouthH * 0.55;
+        
+        const tongueGrad = g.createRadialGradient(headX, tongueY, 5, headX, tongueY + tongueH * 0.3, tongueW * 0.6);
+        tongueGrad.addColorStop(0, "#ff8fa3");
+        tongueGrad.addColorStop(0.5, "#f4526e");
+        tongueGrad.addColorStop(1, "#dc2f4a");
         g.fillStyle = tongueGrad;
-        drawMouth(headX - mouthW * 0.28, mouthY + mouthH * 0.50, mouthW * 0.56, mouthH * 0.42, 14);
+        
+        // Tongue shape - more rounded and natural
+        g.beginPath();
+        g.ellipse(headX, tongueY, tongueW * 0.45, tongueH * 0.9, 0, 0, Math.PI * 2);
         g.fill();
         
-        // Tongue texture
-        g.fillStyle = "rgba(220, 80, 100, 0.2)";
+        // Tongue center line for texture
+        g.strokeStyle = "rgba(210, 70, 90, 0.3)";
+        g.lineWidth = 1.5;
         g.beginPath();
-        g.ellipse(headX, mouthY + mouthH * 0.68, mouthW * 0.15, mouthH * 0.12, 0, 0, Math.PI * 2);
-        g.fill();
+        g.moveTo(headX, tongueY - tongueH * 0.5);
+        g.lineTo(headX, tongueY + tongueH * 0.4);
+        g.stroke();
       }
 
-      // Upper lip definition
-      g.strokeStyle = "rgba(210, 150, 130, 0.4)";
-      g.lineWidth = 1.5;
+      // Lips definition - upper lip curve
+      g.strokeStyle = "rgba(200, 140, 120, 0.5)";
+      g.lineWidth = 1.8;
+      g.lineCap = "round";
       g.beginPath();
-      g.moveTo(headX - mouthW * 0.45, mouthY);
-      g.quadraticCurveTo(headX, mouthY - 2, headX + mouthW * 0.45, mouthY);
+      g.moveTo(headX - mouthW * 0.48, mouthY);
+      g.quadraticCurveTo(headX, mouthY - 2, headX + mouthW * 0.48, mouthY);
       g.stroke();
+      
+      // Lower lip shadow when mouth is open
+      if (mouthRef.current > 0.1) {
+        g.strokeStyle = "rgba(180, 130, 110, 0.3)";
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.moveTo(headX - mouthW * 0.45, mouthY + mouthH);
+        g.quadraticCurveTo(headX, mouthY + mouthH + 1, headX + mouthW * 0.45, mouthY + mouthH);
+        g.stroke();
+      }
 
       g.restore(); // Restore rotation
 
@@ -913,7 +1034,7 @@ export default function Home() {
                 transition: "all 0.3s"
               }}
             >
-              {state === "live" ? "✓ Connected — start talking" : state === "connecting" ? "Connecting..." : "Connect & Talk"}
+              {state === "live" ? "✓ Connected – start talking" : state === "connecting" ? "Connecting..." : "Connect & Talk"}
             </button>
 
             <div
